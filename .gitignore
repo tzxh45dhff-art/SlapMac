@@ -39,3 +39,9 @@ fastlane/test_output
 
 ## Crashlytics
 crashlytics-build.properties
+
+## Sparkle tools (downloaded for signing)
+.sparkle-tools/
+
+## Release builds
+build/release/
