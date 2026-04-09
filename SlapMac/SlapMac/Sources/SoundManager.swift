@@ -5,11 +5,11 @@
 // Also handles USB connect/disconnect sounds.
 //
 // ── HOW TO ADD MORE SOUNDS ──
-// 1. Drop your .mp3 or .wav file into the SlapMac folder in Xcode's navigator
+// 1. Drop your .mp3 or .wav file into Resources/Audios/ in Xcode's navigator
 //    (make sure "Copy items if needed" is checked and the target is selected)
 // 2. Name it with the prefix "slap_" — e.g. slap_bonk.wav, slap_thud.mp3
-// 3. Add the filename (without extension) to the `slapSounds` array below
-// 4. Build and run — it will automatically be included in the random rotation!
+//    ⚠️ The "slap_" prefix is REQUIRED — files without it are ignored!
+// 3. Build and run — it will automatically be included in the random rotation!
 
 import AVFoundation
 
