@@ -14,7 +14,7 @@ import IOKit.usb
 nonisolated(unsafe) private weak var _usbMonitorInstance: USBMonitor?
 
 // Opt out of MainActor isolation — IOKit callbacks arrive on arbitrary threads.
-nonisolated(unsafe) class USBMonitor {
+class USBMonitor {
 
 private var notificationPort: IONotificationPortRef?
 private var connectedIterator: io_iterator_t = 0

@@ -12,7 +12,7 @@ import Foundation
 import IOKit
 import IOKit.hid
 
-nonisolated(unsafe) final class SlapDetector {
+final class SlapDetector {
 
     // MARK: - Constants
 
