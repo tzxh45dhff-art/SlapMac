@@ -1,0 +1,155 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+  pages: write
+
+env:
+  SCHEME: SlapMac
+  PROJECT: SlapMac/SlapMac.xcodeproj
+
+jobs:
+  build-and-release:
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_16.app/Contents/Developer
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+
+      - name: Download Sparkle tools
+        run: |
+          mkdir -p .sparkle-tools
+          curl -sL https://github.com/sparkle-project/Sparkle/releases/download/2.9.1/Sparkle-2.9.1.tar.xz -o .sparkle-tools/Sparkle.tar.xz
+          cd .sparkle-tools && tar xf Sparkle.tar.xz
+
+      - name: Build and archive
+        run: |
+          xcodebuild archive \
+            -project "$PROJECT" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -archivePath build/SlapMac.xcarchive \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            ONLY_ACTIVE_ARCH=NO
+
+      - name: Extract app
+        run: |
+          mkdir -p build/release
+          cp -R build/SlapMac.xcarchive/Products/Applications/SlapMac.app build/release/
+
+      - name: Ad-hoc codesign
+        run: codesign --force --deep --sign - build/release/SlapMac.app
+
+      - name: Create DMG
+        run: |
+          hdiutil create \
+            -volname "SlapMac" \
+            -srcfolder build/release/SlapMac.app \
+            -ov \
+            -format UDZO \
+            "build/release/SlapMac-${{ steps.version.outputs.VERSION }}.dmg"
+
+      - name: Sign DMG with Sparkle
+        id: sparkle
+        env:
+          SPARKLE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          DMG="build/release/SlapMac-${{ steps.version.outputs.VERSION }}.dmg"
+          
+          # sign_update reads the key from SPARKLE_KEY env var or stdin
+          SIGNATURE=$(.sparkle-tools/bin/sign_update "$DMG" --ed-key-file <(echo "$SPARKLE_KEY"))
+          
+          ED_SIG=$(echo "$SIGNATURE" | grep -o 'sparkle:edSignature="[^"]*"' | cut -d'"' -f2)
+          FILE_LENGTH=$(stat -f%z "$DMG")
+          
+          echo "ED_SIGNATURE=$ED_SIG" >> $GITHUB_OUTPUT
+          echo "FILE_LENGTH=$FILE_LENGTH" >> $GITHUB_OUTPUT
+
+      - name: Generate appcast.xml
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          DMG_NAME="SlapMac-${VERSION}.dmg"
+          PUB_DATE=$(date -R)
+          
+          cat > build/release/appcast.xml << EOF
+          <?xml version="1.0" encoding="utf-8"?>
+          <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
+            <channel>
+              <title>SlapMac Updates</title>
+              <link>https://tzxh45dhff-art.github.io/SlapMac/appcast.xml</link>
+              <description>Most recent updates to SlapMac</description>
+              <language>en</language>
+              <item>
+                <title>Version ${VERSION}</title>
+                <pubDate>${PUB_DATE}</pubDate>
+                <sparkle:version>${VERSION}</sparkle:version>
+                <sparkle:shortVersionString>${VERSION}</sparkle:shortVersionString>
+                <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+                <description><![CDATA[
+                  <h2>SlapMac v${VERSION}</h2>
+                  <ul>
+                    <li>Latest release</li>
+                  </ul>
+                ]]></description>
+                <enclosure
+                  url="https://github.com/tzxh45dhff-art/SlapMac/releases/download/v${VERSION}/${DMG_NAME}"
+                  sparkle:edSignature="${{ steps.sparkle.outputs.ED_SIGNATURE }}"
+                  length="${{ steps.sparkle.outputs.FILE_LENGTH }}"
+                  type="application/octet-stream" />
+              </item>
+            </channel>
+          </rss>
+          EOF
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/release/SlapMac-${{ steps.version.outputs.VERSION }}.dmg
+          name: SlapMac v${{ steps.version.outputs.VERSION }}
+          body: |
+            ## SlapMac v${{ steps.version.outputs.VERSION }}
+
+            ### Download
+            Download **SlapMac-${{ steps.version.outputs.VERSION }}.dmg** below and drag SlapMac.app to your Applications folder.
+
+            > **Note**: Since this app is not notarized, you'll need to right-click → Open on first launch.
+
+      - name: Deploy appcast to GitHub Pages
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Create orphan gh-pages branch with just appcast.xml
+          git checkout --orphan gh-pages-deploy
+          git rm -rf . 2>/dev/null || true
+          cp build/release/appcast.xml .
+          
+          # Add a simple index.html
+          cat > index.html << 'INDEXEOF'
+          <!DOCTYPE html>
+          <html>
+          <head><title>SlapMac Updates</title></head>
+          <body>
+            <h1>SlapMac Auto-Update Feed</h1>
+            <p>This page hosts the Sparkle appcast for SlapMac auto-updates.</p>
+            <p><a href="https://github.com/tzxh45dhff-art/SlapMac/releases">Download latest release</a></p>
+          </body>
+          </html>
+          INDEXEOF
+          
+          git add appcast.xml index.html
+          git commit -m "Update appcast.xml for v${{ steps.version.outputs.VERSION }}"
+          git push origin HEAD:gh-pages --force
